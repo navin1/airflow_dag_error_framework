@@ -7,10 +7,11 @@ from pathlib import Path
 
 from airflow.models import Variable
 from airflow.models.xcom import XCom
+from jinja2 import Environment, FileSystemLoader
 
 log = logging.getLogger(__name__)
 
-_TEMPLATE_PATH = Path(__file__).parent / "templates" / "dag_failure_email.html"
+_TEMPLATE_DIR = Path(__file__).parent / "templates"
 
 
 # ---------------------------------------------------------------------------
@@ -19,12 +20,13 @@ _TEMPLATE_PATH = Path(__file__).parent / "templates" / "dag_failure_email.html"
 
 def dag_failure_email_callback(context: dict) -> None:
     """Collect per-task XCom failure summaries and send a consolidated alert."""
-    dag_id = context["dag"].dag_id
-    run_id = context.get("run_id", "")
+    dag_id         = context["dag"].dag_id
+    run_id         = context.get("run_id", "")
     execution_date = str(context.get("ds", ""))
     airflow_ui_url = Variable.get("AIRFLOW_UI_URL", default_var="http://localhost:8080")
 
     failed_tasks = _collect_failure_xcoms(context)
+    failed_tasks = _enrich_row_counts(failed_tasks, dag_id, run_id)
 
     recipients_raw = Variable.get("ALERT_EMAIL_RECIPIENTS", default_var="")
     recipients = [r.strip() for r in recipients_raw.split(",") if r.strip()]
@@ -32,11 +34,19 @@ def dag_failure_email_callback(context: dict) -> None:
         log.warning("ALERT_EMAIL_RECIPIENTS Airflow Variable is empty — skipping failure email")
         return
 
-    html = _render_template(dag_id, run_id, execution_date, failed_tasks, airflow_ui_url)
+    dag_url = f"{airflow_ui_url.rstrip('/')}/dags/{dag_id}/grid"
+    html = _render_template(
+        dag_id              = dag_id,
+        run_id              = run_id,
+        execution_date      = execution_date,
+        failed_count        = len(failed_tasks),
+        failed_task_details = failed_tasks,
+        dag_url             = dag_url,
+    )
     send_via_sendgrid(
-        to=recipients,
-        subject=f"[AIRFLOW FAILURE] {dag_id} | {execution_date}",
-        html_content=html,
+        to           = recipients,
+        subject      = f"[AIRFLOW FAILURE] {dag_id} | {execution_date}",
+        html_content = html,
     )
 
 
@@ -45,67 +55,79 @@ def dag_failure_email_callback(context: dict) -> None:
 # ---------------------------------------------------------------------------
 
 def _collect_failure_xcoms(context: dict) -> list[dict]:
-    """Pull failure XComs pushed by make_task_failure_callback for each failed task."""
     dag_run = context["dag_run"]
-    dag_id = context["dag"].dag_id
-    run_id = context.get("run_id", "")
+    dag_id  = context["dag"].dag_id
+    run_id  = context.get("run_id", "")
 
     failed = []
     for ti in dag_run.get_task_instances(state=["failed"]):
-        xcom_key = f"failure_{ti.task_id}"
         val = XCom.get_one(
-            run_id=run_id,
-            key=xcom_key,
-            task_id=ti.task_id,
-            dag_id=dag_id,
-            include_prior_dates=False,
+            run_id             = run_id,
+            key                = f"failure_{ti.task_id}",
+            task_id            = ti.task_id,
+            dag_id             = dag_id,
+            include_prior_dates= False,
         )
         if val and isinstance(val, dict):
             failed.append(val)
         else:
-            # Fallback: build a minimal entry from task instance metadata
             failed.append({
-                "task_id": ti.task_id,
-                "dag_id": dag_id,
-                "run_id": run_id,
-                "execution_date": str(context.get("ds", "")),
-                "error": str(ti.state),
-                "target_table": "",
+                "task_id":       ti.task_id,
+                "table_name":    "",
+                "error_type":    "UnknownError",
+                "error_message": str(ti.state),
+                "traceback":     "",
             })
+
+    for t in failed:
+        t.setdefault("rows_processed", "N/A")
+        t.setdefault("rows_inserted",  "N/A")
+        t.setdefault("rows_failed",    "N/A")
+        t.setdefault("duration",       "N/A")
+
     return failed
 
 
-def _render_template(
-    dag_id: str,
-    run_id: str,
-    execution_date: str,
-    failed_tasks: list[dict],
-    airflow_ui_url: str,
-) -> str:
-    template = _TEMPLATE_PATH.read_text()
+def _enrich_row_counts(failed_tasks: list[dict], dag_id: str, run_id: str) -> list[dict]:
+    """Join failed tasks with dag_audit_log to fill in row counts."""
+    try:
+        from google.cloud import bigquery
+        from utils.airflow_config import get_config
 
-    task_rows = ""
-    for t in failed_tasks:
-        error_text = str(t.get("error", "N/A")).replace("<", "&lt;").replace(">", "&gt;")
-        task_rows += (
-            f"<tr>"
-            f"<td>{t.get('task_id', 'N/A')}</td>"
-            f"<td>{t.get('target_table', '') or '—'}</td>"
-            f'<td style="color:#dc3545;word-break:break-all;">{error_text}</td>'
-            f"</tr>\n"
-        )
+        cfg          = get_config()
+        project      = cfg["project1"]
+        dataset      = cfg["error_log_dataset"]
+        audit_table  = f"{project}.{dataset}.{cfg['audit_log_table']}"
 
-    dag_url = f"{airflow_ui_url.rstrip('/')}/dags/{dag_id}/grid"
+        client = bigquery.Client()
+        query  = f"""
+            SELECT task_id, total_rows, clean_rows, error_rows
+            FROM `{audit_table}`
+            WHERE dag_id     = @dag_id
+              AND dag_run_id = @run_id
+        """
+        job_cfg = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("dag_id",  "STRING", dag_id),
+            bigquery.ScalarQueryParameter("run_id",  "STRING", run_id),
+        ])
+        audit_map = {row.task_id: row for row in client.query(query, job_config=job_cfg).result()}
 
-    return (
-        template
-        .replace("{{dag_id}}", dag_id)
-        .replace("{{run_id}}", run_id)
-        .replace("{{execution_date}}", execution_date)
-        .replace("{{task_rows}}", task_rows)
-        .replace("{{dag_url}}", dag_url)
-        .replace("{{failed_count}}", str(len(failed_tasks)))
-    )
+        for task in failed_tasks:
+            a = audit_map.get(task["task_id"])
+            if a:
+                task["rows_processed"] = f"{a.total_rows or 0:,}"
+                task["rows_inserted"]  = f"{a.clean_rows  or 0:,}"
+                task["rows_failed"]    = f"{a.error_rows  or 0:,}"
+
+    except Exception as exc:
+        log.warning("Could not enrich row counts from audit log: %s", exc)
+
+    return failed_tasks
+
+
+def _render_template(**kwargs) -> str:
+    env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=True)
+    return env.get_template("dag_failure_email.html").render(**kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -114,24 +136,24 @@ def _render_template(
 
 def send_via_sendgrid(to: list[str], subject: str, html_content: str) -> None:
     """Send an email via the SendGrid v3 Mail Send API (no SMTP, no SDK)."""
-    api_key = os.environ["SENDGRID_API_KEY"]
+    api_key    = os.environ["SENDGRID_API_KEY"]
     from_email = os.environ.get("EMAIL_FROM", "noreply@example.com")
 
     payload = {
         "personalizations": [{"to": [{"email": addr} for addr in to]}],
-        "from": {"email": from_email},
+        "from":    {"email": from_email},
         "subject": subject,
         "content": [{"type": "text/html", "value": html_content}],
     }
 
     req = urllib.request.Request(
         "https://api.sendgrid.com/v3/mail/send",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
+        data    = json.dumps(payload).encode("utf-8"),
+        headers = {
             "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
+            "Content-Type":  "application/json",
         },
-        method="POST",
+        method  = "POST",
     )
 
     try:

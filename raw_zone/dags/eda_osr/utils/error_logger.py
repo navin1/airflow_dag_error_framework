@@ -1,5 +1,6 @@
 import json
 import logging
+import traceback as _tb
 from datetime import datetime, timezone
 from typing import Any
 
@@ -51,19 +52,24 @@ def make_task_failure_callback(task_id: str, target_table: str = ""):
         run_id = context.get("run_id", "")
         execution_date = str(context.get("ds", ""))
         exception = context.get("exception")
-        error_msg = str(exception) if exception else "Unknown error"
+        error_msg  = str(exception) if exception else "Unknown error"
+        error_type = type(exception).__name__ if exception else "UnknownError"
+        tb_str = (
+            "".join(_tb.format_tb(exception.__traceback__)).strip()
+            if exception and exception.__traceback__
+            else ""
+        )
 
         # Push summary XCom so the DAG-level callback can build the email
         ti = context["task_instance"]
         ti.xcom_push(
             key=f"failure_{task_id}",
             value={
-                "task_id": task_id,
-                "dag_id": dag_id,
-                "run_id": run_id,
-                "execution_date": execution_date,
-                "error": error_msg,
-                "target_table": target_table,
+                "task_id":       task_id,
+                "table_name":    target_table,
+                "error_type":    error_type,
+                "error_message": error_msg,
+                "traceback":     tb_str,
             },
         )
 
