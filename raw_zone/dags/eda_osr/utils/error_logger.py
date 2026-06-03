@@ -74,30 +74,31 @@ def make_task_failure_callback(task_id: str, target_table: str = ""):
         )
 
         # Write a runtime-failure row to the error + audit tables
-        try:
-            error_table, audit_table = _log_tables()
-            _bq_insert(error_table, [{
-                "dag_id": dag_id,
-                "task_id": task_id,
-                "dag_run_id": run_id,
-                "execution_date": execution_date,
-                "inserted_at": _now_iso(),
-                "source_table": target_table,
-                "row_data": json.dumps({"exception": error_msg}),
-                "error_reason": "TASK_RUNTIME_FAILURE",
-            }])
-            _bq_insert(audit_table, [{
-                "dag_id": dag_id,
-                "task_id": task_id,
-                "dag_run_id": run_id,
-                "execution_date": execution_date,
-                "inserted_at": _now_iso(),
-                "total_rows": 0,
-                "clean_rows": 0,
-                "error_rows": 0,
-                "status": f"FAILED: {error_msg[:200]}",
-            }])
-        except Exception as exc:
-            log.error("Failed to write failure record to BigQuery: %s", exc)
+        # TODO: uncomment once BQ tables are set up
+        # try:
+        #     error_table, audit_table = _log_tables()
+        #     _bq_insert(error_table, [{
+        #         "dag_id": dag_id,
+        #         "task_id": task_id,
+        #         "dag_run_id": run_id,
+        #         "execution_date": execution_date,
+        #         "inserted_at": _now_iso(),
+        #         "source_table": target_table,
+        #         "row_data": json.dumps({"exception": error_msg}),
+        #         "error_reason": "TASK_RUNTIME_FAILURE",
+        #     }])
+        #     _bq_insert(audit_table, [{
+        #         "dag_id": dag_id,
+        #         "task_id": task_id,
+        #         "dag_run_id": run_id,
+        #         "execution_date": execution_date,
+        #         "inserted_at": _now_iso(),
+        #         "total_rows": 0,
+        #         "clean_rows": 0,
+        #         "error_rows": 0,
+        #         "status": f"FAILED: {error_msg[:200]}",
+        #     }])
+        # except Exception as exc:
+        #     log.error("Failed to write failure record to BigQuery: %s", exc)
 
     return _on_task_failure

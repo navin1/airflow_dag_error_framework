@@ -33,6 +33,8 @@ def dag_failure_email_callback(context: dict) -> None:
         log.warning("ALERT_EMAIL_RECIPIENTS Airflow Variable is empty — skipping failure email")
         return
 
+    trace_uuid = context["task_instance"].xcom_pull(task_ids="make_uuid_task") or "N/A"
+
     dag_url = f"{airflow_ui_url.rstrip('/')}/dags/{dag_id}/grid"
     html = _render_template(
         dag_id              = dag_id,
@@ -40,6 +42,7 @@ def dag_failure_email_callback(context: dict) -> None:
         execution_date      = execution_date,
         failed_count        = len(failed_tasks),
         failed_task_details = failed_tasks,
+        trace_uuid          = trace_uuid,
         dag_url             = dag_url,
     )
     send_via_sendgrid(
