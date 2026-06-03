@@ -25,15 +25,14 @@ def dag_failure_email_callback(context: dict) -> None:
     execution_date = str(context.get("ds", ""))
     airflow_ui_url = Variable.get("AIRFLOW_UI_URL", default_var="http://localhost:8080")
 
-    failed_tasks = _collect_failure_xcoms(context)
-
     recipients_raw = Variable.get("ALERT_EMAIL_RECIPIENTS", default_var="")
     recipients = [r.strip() for r in recipients_raw.split(",") if r.strip()]
     if not recipients:
         log.warning("ALERT_EMAIL_RECIPIENTS Airflow Variable is empty — skipping failure email")
         return
 
-    trace_uuid = context["task_instance"].xcom_pull(task_ids="make_uuid_task") or "N/A"
+    failed_tasks = _collect_failure_xcoms(context)
+    trace_uuid   = context["task_instance"].xcom_pull(task_ids="make_uuid_task") or "N/A"
 
     dag_url = f"{airflow_ui_url.rstrip('/')}/dags/{dag_id}/grid"
     html = _render_template(
@@ -95,7 +94,10 @@ def _render_template(**kwargs) -> str:
 
 def send_via_sendgrid(to: list[str], subject: str, html_content: str) -> None:
     """Send an email via the SendGrid v3 Mail Send API (no SMTP, no SDK)."""
-    api_key    = os.environ["SENDGRID_API_KEY"]
+    api_key = os.environ.get("SENDGRID_API_KEY")
+    if not api_key:
+        log.error("SENDGRID_API_KEY env var not set — cannot send failure email")
+        return
     from_email = os.environ.get("EMAIL_FROM", "noreply@example.com")
 
     payload = {

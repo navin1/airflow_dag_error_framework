@@ -76,6 +76,7 @@ def make_task_failure_callback(task_id: str, target_table: str = ""):
         # Write a runtime-failure row to the error + audit tables
         # TODO: uncomment once BQ tables are set up
         # try:
+        #     trace_uuid = ti.xcom_pull(task_ids="make_uuid_task") or ""
         #     error_table, audit_table = _log_tables()
         #     _bq_insert(error_table, [{
         #         "dag_id": dag_id,
@@ -86,6 +87,7 @@ def make_task_failure_callback(task_id: str, target_table: str = ""):
         #         "source_table": target_table,
         #         "row_data": json.dumps({"exception": error_msg}),
         #         "error_reason": "TASK_RUNTIME_FAILURE",
+        #         "trace_uuid": trace_uuid,
         #     }])
         #     _bq_insert(audit_table, [{
         #         "dag_id": dag_id,
@@ -97,6 +99,7 @@ def make_task_failure_callback(task_id: str, target_table: str = ""):
         #         "clean_rows": 0,
         #         "error_rows": 0,
         #         "status": f"FAILED: {error_msg[:200]}",
+        #         "trace_uuid": trace_uuid,
         #     }])
         # except Exception as exc:
         #     log.error("Failed to write failure record to BigQuery: %s", exc)
