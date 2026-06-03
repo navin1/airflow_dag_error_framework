@@ -1,0 +1,16 @@
+{
+  "key1":                  "eda_osr_raw.sales_summary",
+  "returns_table":         "eda_osr_raw.returns_data",
+  "aas_table":             "eda_osr_raw.aas_data",
+  "as_table":              "eda_osr_raw.as_data",
+
+  "staging_dataset":       "eda_osr_staging",
+  "staging_sales_table":   "sales_staging",
+  "staging_returns_table": "returns_staging",
+  "staging_aas_table":     "aas_staging",
+  "staging_as_table":      "as_staging",
+
+  "error_log_dataset":     "eda_osr_ops",
+  "error_log_table":       "dag_error_log",
+  "audit_log_table":       "dag_audit_log"
+}
