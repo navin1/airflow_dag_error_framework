@@ -102,7 +102,7 @@
   }
   .grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(2, 1fr);
     gap: 10px;
     margin-bottom: 16px;
   }
@@ -111,6 +111,7 @@
     border: 1px solid #eee;
     border-radius: 4px;
     padding: 10px 14px;
+    text-align: left;
   }
   .box label {
     font-size: 11px;
@@ -211,11 +212,7 @@
       <div class="task-body">
         <div class="grid">
           <div class="box"><label>Table</label><span>{{ task.table_name or '—' }}</span></div>
-          <div class="box"><label>Duration</label><span>{{ task.duration }}</span></div>
           <div class="box"><label>Error Type</label><span>{{ task.error_type }}</span></div>
-          <div class="box"><label>Rows Processed</label><span>{{ task.rows_processed }}</span></div>
-          <div class="box green"><label>Rows Inserted</label><span>{{ task.rows_inserted }}</span></div>
-          <div class="box red"><label>Bad Rows Logged</label><span>{{ task.rows_failed }}</span></div>
         </div>
         <div class="lbl2">Error Message</div>
         <div class="code">{{ task.error_message }}</div>

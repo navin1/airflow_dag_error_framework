@@ -26,7 +26,6 @@ def dag_failure_email_callback(context: dict) -> None:
     airflow_ui_url = Variable.get("AIRFLOW_UI_URL", default_var="http://localhost:8080")
 
     failed_tasks = _collect_failure_xcoms(context)
-    failed_tasks = _enrich_row_counts(failed_tasks, dag_id, run_id)
 
     recipients_raw = Variable.get("ALERT_EMAIL_RECIPIENTS", default_var="")
     recipients = [r.strip() for r in recipients_raw.split(",") if r.strip()]
@@ -79,50 +78,7 @@ def _collect_failure_xcoms(context: dict) -> list[dict]:
                 "traceback":     "",
             })
 
-    for t in failed:
-        t.setdefault("rows_processed", "N/A")
-        t.setdefault("rows_inserted",  "N/A")
-        t.setdefault("rows_failed",    "N/A")
-        t.setdefault("duration",       "N/A")
-
     return failed
-
-
-def _enrich_row_counts(failed_tasks: list[dict], dag_id: str, run_id: str) -> list[dict]:
-    """Join failed tasks with dag_audit_log to fill in row counts."""
-    try:
-        from google.cloud import bigquery
-        from utils.airflow_config import get_config
-
-        cfg          = get_config()
-        project      = cfg["project1"]
-        dataset      = cfg["error_log_dataset"]
-        audit_table  = f"{project}.{dataset}.{cfg['audit_log_table']}"
-
-        client = bigquery.Client()
-        query  = f"""
-            SELECT task_id, total_rows, clean_rows, error_rows
-            FROM `{audit_table}`
-            WHERE dag_id     = @dag_id
-              AND dag_run_id = @run_id
-        """
-        job_cfg = bigquery.QueryJobConfig(query_parameters=[
-            bigquery.ScalarQueryParameter("dag_id",  "STRING", dag_id),
-            bigquery.ScalarQueryParameter("run_id",  "STRING", run_id),
-        ])
-        audit_map = {row.task_id: row for row in client.query(query, job_config=job_cfg).result()}
-
-        for task in failed_tasks:
-            a = audit_map.get(task["task_id"])
-            if a:
-                task["rows_processed"] = f"{a.total_rows or 0:,}"
-                task["rows_inserted"]  = f"{a.clean_rows  or 0:,}"
-                task["rows_failed"]    = f"{a.error_rows  or 0:,}"
-
-    except Exception as exc:
-        log.warning("Could not enrich row counts from audit log: %s", exc)
-
-    return failed_tasks
 
 
 def _render_template(**kwargs) -> str:
