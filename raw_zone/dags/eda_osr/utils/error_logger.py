@@ -14,14 +14,21 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def _log_tables() -> tuple[str, str]:
-    from .airflow_config import get_config
-    cfg = get_config()
-    project = cfg["project1"]
-    dataset = cfg["error_log_dataset"]
+    # TODO: remove hardcoded values after testing
+    project = "my-gcp-project-raw"
+    dataset = "eda_osr_ops"
     return (
-        f"{project}.{dataset}.{cfg['error_log_table']}",
-        f"{project}.{dataset}.{cfg['audit_log_table']}",
+        f"{project}.{dataset}.dag_error_log",
+        f"{project}.{dataset}.dag_audit_log",
     )
+    # from .airflow_config import get_config
+    # cfg = get_config()
+    # project = cfg["project1"]
+    # dataset = cfg["error_log_dataset"]
+    # return (
+    #     f"{project}.{dataset}.{cfg['error_log_table']}",
+    #     f"{project}.{dataset}.{cfg['audit_log_table']}",
+    # )
 
 
 def _now_iso() -> str:
@@ -48,6 +55,7 @@ def make_task_failure_callback(task_id: str, target_table: str = ""):
     """
 
     def _on_task_failure(context: dict) -> None:
+        print("DEBUG [error_logger]: _on_task_failure called")
         dag_id = context["dag"].dag_id
         run_id = context.get("run_id", "")
         execution_date = str(context.get("ds", ""))
@@ -73,35 +81,40 @@ def make_task_failure_callback(task_id: str, target_table: str = ""):
             },
         )
 
-        # Write a runtime-failure row to the error + audit tables
-        # TODO: uncomment once BQ tables are set up
-        # try:
-        #     trace_uuid = ti.xcom_pull(task_ids="make_uuid_task") or ""
-        #     error_table, audit_table = _log_tables()
-        #     _bq_insert(error_table, [{
-        #         "dag_id": dag_id,
-        #         "task_id": task_id,
-        #         "dag_run_id": run_id,
-        #         "execution_date": execution_date,
-        #         "inserted_at": _now_iso(),
-        #         "source_table": target_table,
-        #         "row_data": json.dumps({"exception": error_msg}),
-        #         "error_reason": "TASK_RUNTIME_FAILURE",
-        #         "trace_uuid": trace_uuid,
-        #     }])
-        #     _bq_insert(audit_table, [{
-        #         "dag_id": dag_id,
-        #         "task_id": task_id,
-        #         "dag_run_id": run_id,
-        #         "execution_date": execution_date,
-        #         "inserted_at": _now_iso(),
-        #         "total_rows": 0,
-        #         "clean_rows": 0,
-        #         "error_rows": 0,
-        #         "status": f"FAILED: {error_msg[:200]}",
-        #         "trace_uuid": trace_uuid,
-        #     }])
-        # except Exception as exc:
-        #     log.error("Failed to write failure record to BigQuery: %s", exc)
+        # Write a runtime-failure row to the error table
+        try:
+            trace_uuid = ti.xcom_pull(task_ids="make_uuid_task") or ""
+            error_table, _ = _log_tables()
+            print(f"DEBUG [error_logger]: inserting into {error_table}")
+            _bq_insert(error_table, [{
+                "dag_id":         dag_id,
+                "task_id":        task_id,
+                "dag_run_id":     run_id,
+                "execution_date": execution_date,
+                "inserted_at":    _now_iso(),
+                "source_table":   target_table,
+                "row_data":       json.dumps({"exception": error_msg}),
+                "error_reason":   error_type,
+                "trace_uuid":     trace_uuid,
+            }])
+            print("DEBUG [error_logger]: BQ insert completed")
+        except Exception as exc:
+            print(f"DEBUG [error_logger]: BQ insert FAILED: {exc}")
+            log.exception("Failed to write failure record to BigQuery:")
+
+        # TODO: enable audit_table writes once ready
+        # _, audit_table = _log_tables()
+        # _bq_insert(audit_table, [{
+        #     "dag_id":         dag_id,
+        #     "task_id":        task_id,
+        #     "dag_run_id":     run_id,
+        #     "execution_date": execution_date,
+        #     "inserted_at":    _now_iso(),
+        #     "total_rows":     0,
+        #     "clean_rows":     0,
+        #     "error_rows":     0,
+        #     "status":         f"FAILED: {error_msg[:200]}",
+        #     "trace_uuid":     trace_uuid,
+        # }])
 
     return _on_task_failure
